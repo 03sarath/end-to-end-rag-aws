@@ -1,132 +1,241 @@
-function showLoading() {
-    document.getElementById('loadingSpinner').classList.remove('d-none');
-    document.getElementById('results').innerHTML = '';
+'use strict';
+
+let sessionId = '';
+let cardCounter = 0;
+
+const chatWrapper = document.getElementById('chatWrapper');
+const userInput  = document.getElementById('userInput');
+const sendBtn    = document.getElementById('sendBtn');
+
+// ── Auto-resize textarea ────────────────────────────────────
+userInput.addEventListener('input', () => {
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
+});
+
+// ── Enter to send, Shift+Enter for newline ──────────────────
+userInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// ── Suggestion chips ────────────────────────────────────────
+function sendSuggestion(btn) {
+  userInput.value = btn.textContent.trim();
+  hideSuggestions();
+  sendMessage();
 }
 
-function hideLoading() {
-    document.getElementById('loadingSpinner').classList.add('d-none');
+function hideSuggestions() {
+  const s = document.getElementById('suggestions');
+  if (s) s.style.display = 'none';
 }
 
-function setFilter(filterType) {
-    const searchInput = document.getElementById('searchInput');
-    const filters = {
-        'elderly': 'Find comprehensive health checkup packages for elderly people',
-        'children': 'Find health checkup packages suitable for children',
-        'women': 'Find women\'s health checkup packages',
-        'basic': 'Find basic health checkup packages',
-        'comprehensive': 'Find comprehensive health checkup packages'
-    };
-    searchInput.value = filters[filterType];
-    searchPackages();
-}
+// ── Send message ────────────────────────────────────────────
+async function sendMessage() {
+  const query = userInput.value.trim();
+  if (!query) return;
 
-function displayError(message) {
-    const resultsDiv = document.getElementById('results');
-    resultsDiv.innerHTML = `
-        <div class="alert alert-danger" role="alert">
-            <h4 class="alert-heading">Error!</h4>
-            <p>${message}</p>
-            <hr>
-            <p class="mb-0">Please try again or contact support if the problem persists.</p>
-        </div>
-    `;
-}
+  hideSuggestions();
+  appendUserMessage(query);
+  userInput.value = '';
+  userInput.style.height = 'auto';
+  setBusy(true);
 
-function displayResults(data) {
-    const resultsDiv = document.getElementById('results');
-    resultsDiv.innerHTML = '';
+  const loadingRow = appendLoading();
 
-    if (data.error) {
-        displayError(data.error);
-        return;
-    }
+  try {
+    const payload = { query };
+    if (sessionId) payload.session_id = sessionId;
 
-    if (!data.packages || data.packages.length === 0) {
-        resultsDiv.innerHTML = `
-            <div class="alert alert-info" role="alert">
-                <h4 class="alert-heading">No Packages Found</h4>
-                <p>No health packages found matching your criteria. Please try:</p>
-                <ul>
-                    <li>Using different keywords</li>
-                    <li>Broadening your search criteria</li>
-                    <li>Checking the spelling of hospital names</li>
-                </ul>
-            </div>
-        `;
-        return;
-    }
-
-    data.packages.forEach(package => {
-        const packageCard = document.createElement('div');
-        packageCard.className = 'package-card';
-        packageCard.innerHTML = `
-            <div class="package-header">
-                <h4>${package.hospital}</h4>
-                <div class="package-price">₹${package.price}</div>
-            </div>
-            <div class="package-details">
-                <p>${package.description}</p>
-            </div>
-            <div class="package-features">
-                <h5>Package Includes:</h5>
-                <ul>
-                    ${package.features.map(feature => `
-                        <li class="feature-item">
-                            <i class="fas fa-check-circle"></i>
-                            ${feature}
-                        </li>
-                    `).join('')}
-                </ul>
-            </div>
-            <div class="mt-3">
-                <a href="${package.booking_link || '#'}" class="btn btn-primary" target="_blank">Book Now</a>
-            </div>
-        `;
-        resultsDiv.appendChild(packageCard);
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
     });
+
+    const data = await res.json();
+    loadingRow.remove();
+
+    if (!res.ok) {
+      appendError(data.error || 'Something went wrong. Please try again.');
+      return;
+    }
+
+    if (data.session_id) sessionId = data.session_id;
+    appendAiResponse(data.message, data.packages || []);
+
+  } catch (err) {
+    loadingRow.remove();
+    appendError('Network error. Please check your connection and try again.');
+  } finally {
+    setBusy(false);
+    scrollToBottom();
+  }
 }
 
-async function searchPackages() {
-    const searchInput = document.getElementById('searchInput');
-    const query = searchInput.value.trim();
-
-    if (!query) {
-        displayError('Please enter a search query');
-        return;
-    }
-
-    showLoading();
-
-    try {
-        console.log('Sending query:', query);
-        const response = await fetch('/search', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ query: query })
-        });
-
-        console.log('Response status:', response.status);
-        const data = await response.json();
-        console.log('Response data:', data);
-        
-        if (!response.ok) {
-            throw new Error(data.error || 'Failed to get response from API');
-        }
-        
-        displayResults(data);
-    } catch (error) {
-        console.error('Search error:', error);
-        displayError(error.message || 'Failed to fetch results. Please try again.');
-    } finally {
-        hideLoading();
-    }
+// ── DOM helpers ─────────────────────────────────────────────
+function appendUserMessage(text) {
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-user';
+  row.innerHTML = `<div class="msg-bubble">${escapeHtml(text)}</div>`;
+  chatWrapper.appendChild(row);
+  scrollToBottom();
 }
 
-// Add event listener for Enter key
-document.getElementById('searchInput').addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-        searchPackages();
-    }
-}); 
+function appendLoading() {
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai msg-loading';
+  row.innerHTML = `
+    <div class="msg-avatar"><i class="bi bi-robot"></i></div>
+    <div class="msg-bubble">
+      <div class="dots-anim"><span></span><span></span><span></span></div>
+      Searching packages…
+    </div>`;
+  chatWrapper.appendChild(row);
+  scrollToBottom();
+  return row;
+}
+
+function appendError(msg) {
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai msg-error';
+  row.innerHTML = `
+    <div class="msg-avatar"><i class="bi bi-robot"></i></div>
+    <div class="msg-bubble"><i class="bi bi-exclamation-circle me-2"></i>${escapeHtml(msg)}</div>`;
+  chatWrapper.appendChild(row);
+}
+
+function appendAiResponse(message, packages) {
+  const row = document.createElement('div');
+  row.className = 'msg-row msg-ai';
+
+  const cardsHtml = packages.length ? buildPackagesHtml(packages) : '';
+
+  row.innerHTML = `
+    <div class="msg-avatar"><i class="bi bi-robot"></i></div>
+    <div class="msg-bubble">
+      <p>${escapeHtml(message)}</p>
+      ${cardsHtml}
+    </div>`;
+
+  chatWrapper.appendChild(row);
+}
+
+// ── Package card builder ────────────────────────────────────
+function buildPackagesHtml(packages) {
+  const sorted = [...packages].sort((a, b) => (a.price || 0) - (b.price || 0));
+  const cards  = sorted.map((pkg) => buildCard(pkg, cardCounter++)).join('');
+  return `<div class="packages-grid">${cards}</div>`;
+}
+
+function buildCard(pkg, idx) {
+  const targetBadge = buildTargetBadge(pkg.target);
+  const testsHtml   = buildTestsSection(pkg.tests, idx);
+  const consultHtml = buildConsultSection(pkg.consultations);
+  const addonsHtml  = buildAddonsSection(pkg.optional_addons);
+
+  return `
+    <div class="pkg-card">
+      <div class="pkg-card-header">
+        <div>
+          <div class="pkg-hospital">
+            <i class="bi bi-hospital"></i>
+            ${escapeHtml(pkg.hospital)}
+          </div>
+          <div class="pkg-name">${escapeHtml(pkg.package_name)}</div>
+        </div>
+        <div class="pkg-meta">
+          <div class="pkg-price">${escapeHtml(pkg.price_display || '₹' + pkg.price)}</div>
+          ${targetBadge}
+        </div>
+      </div>
+      <div class="pkg-card-body">
+        ${consultHtml}
+        ${testsHtml}
+        ${addonsHtml}
+      </div>
+    </div>`;
+}
+
+function buildTargetBadge(target) {
+  if (!target) return '';
+  const t = target.toLowerCase();
+  let cls = 'badge-all';
+  let icon = 'bi-people';
+  if (t.includes('women') || t.includes('woman') || t.includes('female')) { cls = 'badge-women'; icon = 'bi-gender-female'; }
+  else if (t.includes('men') || t.includes('male'))  { cls = 'badge-men';   icon = 'bi-gender-male'; }
+  else if (t.includes('child') || t.includes('kid')) { cls = 'badge-children'; icon = 'bi-emoji-smile'; }
+  return `<span class="pkg-target-badge ${cls}"><i class="bi ${icon}"></i>${escapeHtml(target)}</span>`;
+}
+
+function buildTestsSection(tests, idx) {
+  if (!tests || !tests.length) return '';
+  const id = `tests-${idx}`;
+  const items = tests.map(t => `<div class="test-item">${escapeHtml(t)}</div>`).join('');
+  return `
+    <button class="tests-toggle" onclick="toggleSection(this, '${id}')">
+      <span><i class="bi bi-clipboard2-pulse me-2"></i>Tests Included <span class="tests-count">(${tests.length})</span></span>
+      <i class="bi bi-chevron-down toggle-icon"></i>
+    </button>
+    <div class="tests-list" id="${id}">${items}</div>`;
+}
+
+function buildConsultSection(consults) {
+  if (!consults || !consults.length) return '';
+  const chips = consults.map(c =>
+    `<span class="consult-chip"><i class="bi bi-person-badge"></i>${escapeHtml(c)}</span>`
+  ).join('');
+  return `
+    <div style="padding:8px 0 4px;">
+      <div style="font-size:.78rem;font-weight:700;color:#065f46;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">
+        <i class="bi bi-person-check me-1"></i>Consultations
+      </div>
+      <div class="consult-list">${chips}</div>
+    </div>`;
+}
+
+function buildAddonsSection(addons) {
+  if (!addons || !addons.length) return '';
+  const rows = addons.map(a =>
+    `<div class="addon-item">
+       <span>${escapeHtml(a.name)}</span>
+       <span class="addon-price">+₹${Number(a.price).toLocaleString('en-IN')}</span>
+     </div>`
+  ).join('');
+  return `
+    <div class="addons-section">
+      <div class="addons-title"><i class="bi bi-plus-circle me-1"></i>Optional Add-ons</div>
+      ${rows}
+    </div>`;
+}
+
+// ── Toggle collapsible sections ─────────────────────────────
+function toggleSection(btn, targetId) {
+  const panel = document.getElementById(targetId);
+  const isOpen = panel.classList.toggle('open');
+  btn.classList.toggle('open', isOpen);
+}
+
+// ── Utility ─────────────────────────────────────────────────
+function setBusy(busy) {
+  sendBtn.disabled    = busy;
+  userInput.disabled  = busy;
+}
+
+function scrollToBottom() {
+  const main = document.querySelector('.chat-main');
+  main.scrollTop = main.scrollHeight;
+}
+
+function escapeHtml(str) {
+  if (typeof str !== 'string') return String(str || '');
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
