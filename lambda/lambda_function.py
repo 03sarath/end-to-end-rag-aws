@@ -9,14 +9,13 @@ bedrock_client = boto3.client('bedrock-runtime', config=bedrock_config)
 bedrock_agent_client = boto3.client("bedrock-agent-runtime", config=bedrock_config)
 
 # Configuration
-KB_ID = os.environ['KB_ID']  # Your Knowledge Base ID
-MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"  # or use Sonnet if preferred
+KB_ID = os.environ['KB_ID']
+MODEL_ID = "amazon.nova-lite-v1:0"  # ✅ Changed from claude-3-haiku
 REGION = os.environ['AWS_RGN']
 
 def retrieve_and_generate(input_text, kb_id, session_id=None):
     model_arn = f'arn:aws:bedrock:{REGION}::foundation-model/{MODEL_ID}'
     
-    # Enhance the query to get structured information
     enhanced_query = f"""Please provide detailed information about health checkup packages in the following format:
     Hospital Name: [hospital name]
     Package Name: [package name]
@@ -53,7 +52,6 @@ def retrieve_and_generate(input_text, kb_id, session_id=None):
                     }
                 }
             )
-        
         return response
     except Exception as e:
         print(f"Error in retrieve_and_generate: {str(e)}")
@@ -63,12 +61,8 @@ def parse_bedrock_response(response):
     """Parse the Bedrock response and structure it for the frontend"""
     try:
         generated_text = response['output']['text']
-        
-        # Extract packages from the generated text
         packages = []
         current_package = None
-        
-        # Split the response into lines
         lines = generated_text.split('\n')
         
         for line in lines:
@@ -76,7 +70,6 @@ def parse_bedrock_response(response):
             if not line:
                 continue
             
-            # Check for new package section
             if line.startswith('Hospital Name:') or line.startswith('Package Name:'):
                 if current_package and (current_package['hospital'] != 'Information Available' or 
                                       current_package['description'] or 
@@ -90,7 +83,6 @@ def parse_bedrock_response(response):
                     'price': 'Contact for pricing'
                 }
             
-            # Parse package information
             if current_package:
                 if line.startswith('Hospital Name:'):
                     current_package['hospital'] = line.replace('Hospital Name:', '').strip()
@@ -108,15 +100,12 @@ def parse_bedrock_response(response):
                     if feature:
                         current_package['features'].append(feature)
         
-        # Add the last package if exists
         if current_package and (current_package['hospital'] != 'Information Available' or 
                               current_package['description'] or 
                               current_package['features']):
             packages.append(current_package)
         
-        # If no packages were found, try to extract information from the raw text
         if not packages:
-            # Look for hospital name in the text
             hospital_name = None
             for line in lines:
                 if 'hospital' in line.lower() or 'medical center' in line.lower():
@@ -130,18 +119,13 @@ def parse_bedrock_response(response):
                 'price': 'Contact for pricing'
             })
         
-        return {
-            'packages': packages
-        }
+        return {'packages': packages}
     except Exception as e:
         print(f"Error in parse_bedrock_response: {str(e)}")
-        return {
-            'error': f'Error parsing response: {str(e)}'
-        }
+        return {'error': f'Error parsing response: {str(e)}'}
 
 def lambda_handler(event, context):
     try:
-        # Get the query from the request
         body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
         query = body.get('query')
         
@@ -151,10 +135,7 @@ def lambda_handler(event, context):
                 'body': json.dumps({'error': 'Query is required'})
             }
         
-        # Call Bedrock
         response = retrieve_and_generate(query, KB_ID)
-        
-        # Parse and structure the response
         result = parse_bedrock_response(response)
         
         return {
@@ -179,4 +160,4 @@ def lambda_handler(event, context):
                 'Access-Control-Allow-Headers': 'Content-Type'
             },
             'body': json.dumps({'error': str(e)})
-        } 
+        }
